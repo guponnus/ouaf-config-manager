@@ -9,15 +9,56 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onView:ouaf-config-manager.explorer",
+    "onCommand:ouaf-config-manager.addEnvironment",
+    "onCommand:ouaf-config-manager.editEnvironment",
+    "onCommand:ouaf-config-manager.compare"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      {
-        "command": "ouaf-config-manager.helloWorld",
-        "title": "Hello World"
+      { "command": "ouaf-config-manager.addEnvironment", "title": "OUAF: Add Environment", "icon": "$(add)" },
+      { "command": "ouaf-config-manager.editEnvironment", "title": "OUAF: Edit Environment", "icon": "$(edit)" },
+      { "command": "ouaf-config-manager.compare", "title": "OUAF: Compare Component", "icon": "$(compare-changes)" },
+      { "command": "ouaf-config-manager.refreshComponent", "title": "OUAF: Refresh Component", "icon": "$(cloud-download)" },
+      { "command": "ouaf-config-manager.checkout", "title": "OUAF: Checkout Component", "icon": "$(cloud-download)" },
+      { "command": "ouaf-config-manager.checkin", "title": "OUAF: Check In Component", "icon": "$(cloud-upload)" },
+      { "command": "ouaf-config-manager.refresh", "title": "OUAF: Refresh Explorer", "icon": "$(refresh)" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ouaf-config-manager-activitybar",
+          "title": "OUAF Configuration",
+          "icon": "resources/ouaf.svg"
+        }
+      ]
+    },
+    "views": {
+      "ouaf-config-manager-activitybar": [
+        { "id": "ouaf-config-manager.explorer", "name": "OUAF Configuration" }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "ouaf-config-manager.addEnvironment", "when": "view == ouaf-config-manager.explorer", "group": "navigation@1" },
+        { "command": "ouaf-config-manager.refresh", "when": "view == ouaf-config-manager.explorer", "group": "navigation@2" }
+      ],
+      "view/item/context": [
+        { "command": "ouaf-config-manager.editEnvironment", "when": "view == ouaf-config-manager.explorer && viewItem == ouaf.environment", "group": "inline" }
+      ]
+    },
+    "configuration": {
+      "title": "OUAF Configuration Manager",
+      "properties": {
+        "ouaf-config-manager.defaultApiPath": {
+          "type": "string",
+          "default": "/api/ouaf/config",
+          "description": "Default API path used when adding an OUAF environment."
+        }
       }
-    ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
