@@ -2,7 +2,7 @@
 
 OUAF Configuration Manager helps teams inspect and maintain Oracle Utilities Application Framework configuration from VS Code.
 
-## Features
+## Features.
 
 - Register Development, UAT, and Production environments with an API URL and optional API token.
 - Choose `None`, Bearer token, or Basic authentication for each API environment.
