@@ -14,7 +14,7 @@ OUAF Configuration Manager helps teams inspect and maintain Oracle Utilities App
 - Refresh or check out snapshots into `.ouaf/<environment>/<component-type>/`, ready for Git versioning.
 - Keep tokens in VS Code Secret Storage; environment metadata is stored in workspace state.
 
-The extension uses this REST adapter endpoint:
+The extension uses this REST adapter endpoint for non-Service Script API component operations:
 
 `<baseUrl>/<apiPath>/<componentType>/<componentName>`
 
@@ -22,13 +22,13 @@ For example, a service script named `C1-DEMO` is requested as:
 
 `https://ouaf.example.com/api/ouaf/config/serviceScript/C1-DEMO`
 
-The OUAF adapter must return the component body as JSON or text and accept an optional Bearer token. The adapter can own database connections and deployment-specific OUAF details, so database credentials are not stored as plaintext in VS Code.
+Service Script configuration uses the SOAP XAI endpoint `<baseUrl>/<apiPath>/CmScriptAsTextViewer`. The extension sends the script code in the `script` element and loads the returned `editDataArea` as the local script content. The OUAF adapter must accept the selected authentication. Database operations use the Oracle Node.js driver directly in thin mode.
 
-The API test sends `GET <baseUrl>/<apiPath>` with the selected authentication. The database test sends `POST <baseUrl>/<apiPath>/database/test` with `{ "database": { ... }, "databasePassword": "..." }` and the selected API authentication. A successful 2xx response is shown as a successful connection.
+The API test sends `GET <baseUrl>/<apiPath>` with the selected authentication. The database test opens an Oracle connection using the configured host, port, service, user, and password, then closes it. Refresh loads service scripts with `SELECT SCR_CD, DESCR254 FROM CI_SCR_L WHERE OWNER_FLG='CM' AND LANGUAGE_CD='ENG' ORDER BY DESCR254`.
 
 ## Requirements
 
-An OUAF API adapter is required. The extension does not assume a specific OUAF deployment URL or database driver.
+An OUAF API adapter and Oracle database access are required. The `oracledb` driver uses thin mode and does not require an Oracle Client installation for supported database versions.
 
 To try it:
 

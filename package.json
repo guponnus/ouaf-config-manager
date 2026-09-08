@@ -21,10 +21,25 @@
       { "command": "ouaf-config-manager.addEnvironment", "title": "OUAF: Add Environment", "icon": "$(add)" },
       { "command": "ouaf-config-manager.editEnvironment", "title": "OUAF: Edit Environment", "icon": "$(edit)" },
       { "command": "ouaf-config-manager.compare", "title": "OUAF: Compare Component", "icon": "$(compare-changes)" },
+      { "command": "ouaf-config-manager.openServiceScript", "title": "OUAF: Open Service Script", "icon": "$(go-to-file)" },
+      { "command": "ouaf-config-manager.refreshServiceScript", "title": "OUAF: Refresh Service Script from API", "icon": "$(cloud-download)" },
+      { "command": "ouaf-config-manager.openServiceScriptSchema", "title": "OUAF: Open Service Script Schema", "icon": "$(symbol-structure)" },
+      { "command": "ouaf-config-manager.compareServiceScript", "title": "OUAF: Compare Service Script", "icon": "$(compare-changes)" },
+      { "command": "ouaf-config-manager.replaceServiceScriptSteps", "title": "OUAF: Replace Steps from Environment", "icon": "$(replace-all)" },
+      { "command": "ouaf-config-manager.compareServiceScriptSchema", "title": "OUAF: Compare Service Script Schema", "icon": "$(compare-changes)" },
+      { "command": "ouaf-config-manager.filterServiceScripts", "title": "OUAF: Filter Service Scripts", "icon": "$(filter)" },
+      { "command": "ouaf-config-manager.clearServiceScriptFilter", "title": "OUAF: Clear Service Script Filter", "icon": "$(clear-all)" },
+      { "command": "ouaf-config-manager.toggleLocalServiceScripts", "title": "OUAF: Show Local Service Scripts", "icon": "$(file-directory)" },
+      { "command": "ouaf-config-manager.refreshServiceScripts", "title": "OUAF: Refresh Service Scripts", "icon": "$(refresh)" },
+      { "command": "ouaf-config-manager.checkoutServiceScript", "title": "OUAF: Checkout Service Scripts", "icon": "$(cloud-download)" },
+      { "command": "ouaf-config-manager.checkin", "title": "OUAF: Check In Service Script", "icon": "$(cloud-upload)" },
       { "command": "ouaf-config-manager.refreshComponent", "title": "OUAF: Refresh Component", "icon": "$(cloud-download)" },
       { "command": "ouaf-config-manager.checkout", "title": "OUAF: Checkout Component", "icon": "$(cloud-download)" },
       { "command": "ouaf-config-manager.checkin", "title": "OUAF: Check In Component", "icon": "$(cloud-upload)" },
-      { "command": "ouaf-config-manager.refresh", "title": "OUAF: Refresh Explorer", "icon": "$(refresh)" }
+      { "command": "ouaf-config-manager.refresh", "title": "OUAF: Refresh Explorer", "icon": "$(refresh)" },
+      { "command": "ouaf-config-manager.connectEnvironment", "title": "OUAF: Connect Environment", "icon": "$(plug)" },
+      { "command": "ouaf-config-manager.disconnectEnvironment", "title": "OUAF: Disconnect Environment", "icon": "$(debug-disconnect)" },
+      { "command": "ouaf-config-manager.collapseAll", "title": "OUAF: Collapse All", "icon": "$(collapse-all)" }
     ],
     "viewsContainers": {
       "activitybar": [
@@ -43,10 +58,28 @@
     "menus": {
       "view/title": [
         { "command": "ouaf-config-manager.addEnvironment", "when": "view == ouaf-config-manager.explorer", "group": "navigation@1" },
-        { "command": "ouaf-config-manager.refresh", "when": "view == ouaf-config-manager.explorer", "group": "navigation@2" }
+        { "command": "ouaf-config-manager.refresh", "when": "view == ouaf-config-manager.explorer", "group": "navigation@2" },
+        { "command": "ouaf-config-manager.collapseAll", "when": "view == ouaf-config-manager.explorer", "group": "navigation@3" }
       ],
       "view/item/context": [
-        { "command": "ouaf-config-manager.editEnvironment", "when": "view == ouaf-config-manager.explorer && viewItem == ouaf.environment", "group": "inline" }
+        { "command": "ouaf-config-manager.editEnvironment", "when": "view == ouaf-config-manager.explorer && viewItem =~ /^environment/", "group": "inline@1" },
+        { "command": "ouaf-config-manager.connectEnvironment", "when": "view == ouaf-config-manager.explorer && viewItem == environmentDisconnected", "group": "inline@2" },
+        { "command": "ouaf-config-manager.disconnectEnvironment", "when": "view == ouaf-config-manager.explorer && viewItem == environmentConnected", "group": "inline@2" },
+        { "command": "ouaf-config-manager.filterServiceScripts", "when": "view == ouaf-config-manager.explorer && viewItem == serviceScriptType", "group": "inline@1" },
+        { "command": "ouaf-config-manager.clearServiceScriptFilter", "when": "view == ouaf-config-manager.explorer && viewItem == serviceScriptType", "group": "inline@2" },
+        { "command": "ouaf-config-manager.toggleLocalServiceScripts", "when": "view == ouaf-config-manager.explorer && viewItem == serviceScriptType", "group": "inline@3" },
+        { "command": "ouaf-config-manager.refreshServiceScripts", "when": "view == ouaf-config-manager.explorer && viewItem == serviceScriptType", "group": "inline@4" },
+        { "command": "ouaf-config-manager.checkoutServiceScript", "when": "view == ouaf-config-manager.explorer && viewItem == serviceScriptType", "group": "inline@5" },
+        { "command": "ouaf-config-manager.compareServiceScript", "when": "view == ouaf-config-manager.explorer && viewItem =~ /serviceScript\\.steps/", "group": "inline@1" },
+        { "command": "ouaf-config-manager.refreshServiceScript", "when": "view == ouaf-config-manager.explorer && viewItem =~ /serviceScript\\.steps/", "group": "inline@2" },
+        { "command": "ouaf-config-manager.replaceServiceScriptSteps", "when": "view == ouaf-config-manager.explorer && viewItem =~ /serviceScript\\.steps/", "group": "inline@3" },
+        { "command": "ouaf-config-manager.checkin", "when": "view == ouaf-config-manager.explorer && viewItem =~ /serviceScript\\.(steps|schema)/", "group": "inline@4" },
+        { "command": "ouaf-config-manager.compareServiceScriptSchema", "when": "view == ouaf-config-manager.explorer && viewItem == serviceScript.schema", "group": "inline@1" },
+        { "command": "ouaf-config-manager.checkoutServiceScript", "when": "view == ouaf-config-manager.explorer && viewItem == serviceScript.schema", "group": "inline@2" },
+        { "command": "ouaf-config-manager.checkin", "when": "view == ouaf-config-manager.explorer && viewItem == serviceScript.schema", "group": "inline@3" },
+        { "command": "ouaf-config-manager.checkoutServiceScript", "when": "view == ouaf-config-manager.explorer && viewItem == serviceScript", "group": "inline@1" },
+        { "command": "ouaf-config-manager.checkin", "when": "view == ouaf-config-manager.explorer && viewItem == serviceScript", "group": "inline@2" },
+        { "command": "ouaf-config-manager.checkin", "when": "view == ouaf-config-manager.explorer && viewItem =~ /^environmentConnected/", "group": "inline@3" }
       ]
     },
     "configuration": {
@@ -67,6 +100,9 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test"
+  },
+  "dependencies": {
+    "oracledb": "^6.9.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.136.0",
