@@ -7,6 +7,12 @@ interface EnvironmentMessage {
 	credentials?: Credentials;
 }
 
+interface SchemaEditorMessage {
+	type: 'saveSchema' | 'copyXPath';
+	content: string;
+	xpath?: string;
+}
+
 interface ComponentTypeItem extends ComponentSelection {
 	isComponentType: true;
 	environmentName: string;
@@ -38,7 +44,11 @@ class OuafTreeDataProvider implements vscode.TreeDataProvider<ExplorerItem> {
 	private readonly serviceScriptFilters = new Map<string, string>();
 	private readonly localOnlyFilters = new Set<string>();
 	public readonly onDidChangeTreeData = this.changed.event;
-	public constructor(private readonly store: OuafStore, private readonly client: OuafClient) {}
+	public constructor(private readonly store: OuafStore, private readonly client: OuafClient, private readonly state: vscode.Memento) {
+		const filters = state.get<Record<string, string>>('ouaf.explorer.filters', {});
+		for (const [environmentName, filter] of Object.entries(filters)) { this.serviceScriptFilters.set(environmentName, filter); }
+		for (const environmentName of state.get<string[]>('ouaf.explorer.localOnly', [])) { this.localOnlyFilters.add(environmentName); }
+	}
 
 	public isConnected(environmentName: string): boolean {
 		return this.store.connectedEnvironmentNames().includes(environmentName);
@@ -68,12 +78,17 @@ class OuafTreeDataProvider implements vscode.TreeDataProvider<ExplorerItem> {
 		} else {
 			this.serviceScriptFilters.delete(environmentName);
 		}
+		void this.state.update('ouaf.explorer.filters', Object.fromEntries(this.serviceScriptFilters));
 		this.changed.fire();
 	}
 
 	public clearServiceScriptFilter(environmentName: string): void {
 		this.serviceScriptFilters.delete(environmentName);
 		this.localOnlyFilters.delete(environmentName);
+		void Promise.all([
+			this.state.update('ouaf.explorer.filters', Object.fromEntries(this.serviceScriptFilters)),
+			this.state.update('ouaf.explorer.localOnly', [...this.localOnlyFilters]),
+		]);
 		this.changed.fire();
 	}
 
@@ -83,6 +98,7 @@ class OuafTreeDataProvider implements vscode.TreeDataProvider<ExplorerItem> {
 		} else {
 			this.localOnlyFilters.add(environmentName);
 		}
+		void this.state.update('ouaf.explorer.localOnly', [...this.localOnlyFilters]);
 		this.changed.fire();
 	}
 
@@ -295,12 +311,7 @@ function componentIcon(type: ComponentSelection['type']): string {
 export function activate(context: vscode.ExtensionContext): void {
 	const store = new OuafStore(context.workspaceState, context.secrets);
 	const client = new OuafClient(store);
-	const provider = new OuafTreeDataProvider(store, client);
-	const schemaContent = new Map<string, string>();
-	context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider('ouaf-schema', {
-		onDidChange: new vscode.EventEmitter<vscode.Uri>().event,
-		provideTextDocumentContent: (uri) => schemaContent.get(uri.toString()) ?? '',
-	}));
+	const provider = new OuafTreeDataProvider(store, client, context.workspaceState);
 	const treeView = vscode.window.createTreeView('ouaf-config-manager.explorer', { treeDataProvider: provider, canSelectMany: true });
 	context.subscriptions.push(treeView);
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.addEnvironment', () => openEnvironmentPanel(context, store, client, provider)));
@@ -369,11 +380,10 @@ export function activate(context: vscode.ExtensionContext): void {
 		try {
 			const file = serviceScriptSchemaFile(profile, script);
 			const localContent = await readLocalServiceScript(file);
-			const document = localContent !== undefined
-				? await vscode.workspace.openTextDocument(file)
-				: await openSchemaPreview(schemaContent, script.name, await client.serviceScriptSchema(profile, script.name));
-			if (localContent !== undefined) { await vscode.languages.setTextDocumentLanguage(document, 'xml'); }
-			await vscode.window.showTextDocument(document, { preview: false });
+			const schema = localContent === undefined
+				? await client.serviceScriptSchema(profile, script.name)
+				: Buffer.from(localContent).toString('utf8');
+			openSchemaEditor(context, script.name, file, schema);
 		} catch (error) { showError(error); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.compareServiceScript', async (item?: ServiceScriptSectionItem | ServiceScriptItem) => {
@@ -491,10 +501,164 @@ async function checkoutSelectedScripts(client: OuafClient, provider: OuafTreeDat
 	vscode.window.showInformationMessage(`Checked out ${uniqueScripts.length} service script${uniqueScripts.length === 1 ? '' : 's'}.`);
 }
 
-async function openSchemaPreview(content: Map<string, string>, scriptCode: string, schema: string): Promise<vscode.TextDocument> {
-	const uri = vscode.Uri.parse(`ouaf-schema:${encodeURIComponent(scriptCode)}.xml`);
-	content.set(uri.toString(), formatXml(schema));
-	return vscode.workspace.openTextDocument(uri);
+function openSchemaEditor(context: vscode.ExtensionContext, scriptCode: string, file: vscode.Uri, schema: string): void {
+	const panel = vscode.window.createWebviewPanel(
+		'ouafSchemaEditor',
+		`${scriptCode} Schema`,
+		vscode.ViewColumn.One,
+		{ enableScripts: true, retainContextWhenHidden: true },
+	);
+	panel.webview.html = schemaEditorHtml(panel.webview, scriptCode, formatXml(schema));
+	panel.webview.onDidReceiveMessage(async (message: SchemaEditorMessage) => {
+		if (message.type === 'copyXPath' && message.xpath) {
+			await vscode.env.clipboard.writeText(message.xpath);
+			return;
+		}
+		if (message.type !== 'saveSchema') { return; }
+		try {
+			await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(file, '..'));
+			await vscode.workspace.fs.writeFile(file, Buffer.from(formatXml(message.content), 'utf8'));
+		} catch (error) {
+			showError(error);
+		}
+	}, undefined, context.subscriptions);
+}
+
+function schemaEditorHtml(webview: vscode.Webview, scriptCode: string, schema: string): string {
+	const nonce = getNonce();
+	const escapedSchema = JSON.stringify(schema).replace(/</g, '\\u003c');
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(scriptCode)} Schema</title>
+<style>
+:root { color-scheme: light dark; }
+body { color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+.toolbar { padding: 8px 12px; border-bottom: 1px solid var(--vscode-panel-border); }
+label { display: block; font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 4px; }
+input { box-sizing: border-box; width: 100%; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); font: inherit; padding: 5px 7px; }
+#tree { flex: 1; overflow: auto; padding: 8px 12px; font-family: var(--vscode-editor-font-family); }
+.node { cursor: pointer; padding: 3px 6px; white-space: pre; }
+.node:hover, .node.selected { background: var(--vscode-list-hoverBackground); }
+.children { margin-left: 18px; }
+.editor-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+#highlight, #editor { box-sizing: border-box; margin: 0; border: 0; white-space: pre; tab-size: 2; }
+#highlight { position: absolute; inset: 0; pointer-events: none; overflow: auto; }
+#editor { position: absolute; inset: 0; resize: none; background: transparent; color: transparent; caret-color: var(--vscode-editor-foreground); outline: none; }
+.xml-tag { color: var(--vscode-symbolIcon-classForeground); }
+.xml-attribute { color: var(--vscode-symbolIcon-propertyForeground); }
+.xml-string { color: var(--vscode-debugTokenExpression-string); }
+.tabs { display: flex; order: 3; border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-tab-inactiveBackground); }
+.tab { border: 0; border-right: 1px solid var(--vscode-panel-border); padding: 8px 14px; color: var(--vscode-tab-inactiveForeground); background: transparent; cursor: pointer; }
+.tab.active { color: var(--vscode-tab-activeForeground); background: var(--vscode-tab-activeBackground); border-top: 2px solid var(--vscode-focusBorder); }
+.content { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; padding: 5px 12px; cursor: pointer; }
+button:hover { background: var(--vscode-button-hoverBackground); }
+</style>
+</head>
+<body>
+<div class="toolbar"><label for="xpath">Selected element XPath</label><input id="xpath" readonly placeholder="Select an XML element in View"></div>
+<div class="content"><div id="tree"></div><div class="editor-wrap" hidden><pre id="highlight" aria-hidden="true"></pre><textarea id="editor" spellcheck="false"></textarea></div></div>
+<div class="tabs"><button class="tab active" data-tab="view">View</button><button class="tab" data-tab="editor">Edit</button></div>
+<script nonce="${nonce}">
+let schemaText = ${escapedSchema};
+const vscode = acquireVsCodeApi();
+const tree = document.getElementById('tree');
+const xpath = document.getElementById('xpath');
+const editorWrap = document.querySelector('.editor-wrap');
+const editor = document.getElementById('editor');
+const highlight = document.getElementById('highlight');
+editor.value = schemaText;
+
+function escapeMarkup(value) { return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function highlightXml(value) {
+	return escapeMarkup(value).replace(/(&lt;\\/?[\\w:.-]+)(.*?)(\\/?&gt;)/g, (match, name, attributes, end) => {
+		const styledAttributes = attributes.replace(/([\\w:.-]+)(=)(&quot;.*?&quot;)/g, '<span class="xml-attribute">$1</span>$2<span class="xml-string">$3</span>');
+		return '<span class="xml-tag">' + name + '</span>' + styledAttributes + '<span class="xml-tag">' + end + '</span>';
+	});
+}
+function refreshHighlight() { highlight.innerHTML = highlightXml(editor.value) + '\\n'; }
+
+function nodePath(node) {
+	const parts = [];
+	while (node && node.nodeType === Node.ELEMENT_NODE) {
+		const suffix = node.getAttribute('type') === 'list' ? '[1]' : '';
+		parts.unshift(node.tagName + suffix);
+		node = node.parentElement;
+	}
+	parts.shift();
+	return parts.join('/');
+}
+
+function renderTree() {
+	tree.replaceChildren();
+	try {
+		schemaText = editor.value;
+		const xmlDocument = new DOMParser().parseFromString(schemaText, 'application/xml');
+		const error = xmlDocument.querySelector('parsererror');
+		if (error) { tree.textContent = 'Unable to parse XML: ' + error.textContent; return; }
+		function renderElement(element, parent) {
+			const row = window.document.createElement('div');
+			row.className = 'node';
+			const attributes = Array.from(element.attributes).map((attribute) => ' ' + attribute.name + '=\"' + attribute.value + '\"').join('');
+			row.innerHTML = highlightXml('<' + element.tagName + attributes + '>');
+			row.addEventListener('click', () => {
+				window.document.querySelectorAll('.selected').forEach((item) => item.classList.remove('selected'));
+				row.classList.add('selected');
+				const selectedPath = nodePath(element);
+				xpath.value = selectedPath;
+				xpath.focus();
+				xpath.select();
+				vscode.postMessage({ type: 'copyXPath', xpath: selectedPath });
+			});
+			parent.appendChild(row);
+			const children = Array.from(element.children);
+			if (children.length) {
+				const group = window.document.createElement('div');
+				group.className = 'children';
+				parent.appendChild(group);
+				children.forEach((child) => renderElement(child, group));
+			}
+			const endRow = window.document.createElement('div');
+			endRow.className = 'node end-element';
+			endRow.innerHTML = highlightXml('</' + element.tagName + '>');
+			parent.appendChild(endRow);
+		}
+		if (xmlDocument.documentElement) { renderElement(xmlDocument.documentElement, tree); }
+	} catch (error) { tree.textContent = String(error); }
+}
+
+document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
+	const isEditor = tab.dataset.tab === 'editor';
+	document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item === tab));
+	tree.hidden = isEditor;
+	editorWrap.hidden = !isEditor;
+	if (isEditor) { editor.focus(); refreshHighlight(); }
+	else { renderTree(); }
+}));
+editor.addEventListener('input', refreshHighlight);
+editor.addEventListener('scroll', () => { highlight.scrollTop = editor.scrollTop; highlight.scrollLeft = editor.scrollLeft; });
+editor.addEventListener('keydown', (event) => {
+	if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+		event.preventDefault();
+		vscode.postMessage({ type: 'saveSchema', content: editor.value });
+	}
+});
+refreshHighlight();
+renderTree();
+</script>
+</body>
+</html>`;
+}
+
+function getNonce(): string {
+	const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+	let result = '';
+	for (let index = 0; index < 32; index++) { result += characters.charAt(Math.floor(Math.random() * characters.length)); }
+	return result;
 }
 
 function getEnvironmentName(argument?: string | EnvironmentProfile | vscode.TreeItem): string | undefined {
@@ -545,11 +709,15 @@ function normalizeSchemaContent(content: Uint8Array | string): string {
 
 function serviceScriptFile(profile: EnvironmentProfile, script: ComponentSelection): vscode.Uri {
 	const directory = profile.localDirectory ? vscode.Uri.file(profile.localDirectory) : getWorkspaceScriptDirectory(profile, script);
-	return vscode.Uri.joinPath(directory, `${script.name.replace(/[^a-zA-Z0-9._-]/g, '_')}.ouaf`);
+	return vscode.Uri.joinPath(directory, `${serviceScriptFileName(script.name)}.ouaf`);
 }
 
 function serviceScriptSchemaFile(profile: EnvironmentProfile, script: ComponentSelection): vscode.Uri {
-	return vscode.Uri.joinPath(serviceScriptSchemaDirectory(profile, script), `${script.name.replace(/[^a-zA-Z0-9._-]/g, '_')}.xml`);
+	return vscode.Uri.joinPath(serviceScriptSchemaDirectory(profile, script), `${serviceScriptFileName(script.name)}.xml`);
+}
+
+function serviceScriptFileName(scriptName: string): string {
+	return scriptName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+$/, '');
 }
 
 function serviceScriptSchemaDirectory(profile: EnvironmentProfile, script: ComponentSelection): vscode.Uri {
@@ -560,9 +728,6 @@ async function writeServiceScriptSchema(profile: EnvironmentProfile, script: Com
 	const file = serviceScriptSchemaFile(profile, script);
 	await vscode.workspace.fs.createDirectory(serviceScriptSchemaDirectory(profile, script));
 	await vscode.workspace.fs.writeFile(file, Buffer.from(formatXml(content), 'utf8'));
-	const document = await vscode.workspace.openTextDocument(file);
-	await vscode.languages.setTextDocumentLanguage(document, 'xml');
-	await vscode.window.showTextDocument(document, { preview: false });
 }
 
 async function checkoutServiceScript(client: OuafClient, profile: EnvironmentProfile, script: ComponentSelection): Promise<void> {
