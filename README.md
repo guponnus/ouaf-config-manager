@@ -17,7 +17,7 @@ OUAF Configuration Manager helps teams inspect and maintain Oracle Utilities App
 - Open Schema in a two-tab View/Edit panel. View shows a syntax-highlighted XML tree, including non-selectable closing elements; Edit provides an editable XML surface.
 - Select an XML element to display its case-sensitive XPath, focus and select the XPath field, and copy the XPath automatically to the clipboard. List elements use a `[1]` XPath suffix.
 - Save Schema edits with the normal editor save shortcut; switching back to View reflects the current XML content.
-- Compare Steps or Schema with another environment using VS Code's native diff editor.
+- Compare Steps or Schema from a local copy or server copy to a same-environment or target-environment server copy using VS Code's native diff editor.
 - Replace local Steps from another environment without changing the local Schema.
 - Check in by timestamping and removing active local copies, returning the Script to its server state.
 - Show local and changed status indicators in the explorer.
@@ -55,7 +55,7 @@ To try it:
 4. Filter Scripts or enable **Show Local Service Scripts**; these explorer choices are retained across refreshes and reloads.
 5. Select one or more Scripts and use **Checkout Service Scripts**, or use it on the Script group to check out all filtered results. Checkout saves Steps and Schema without opening the files.
 6. Open Schema to inspect the XML tree in **View** or edit it in **Edit**. Select an element to copy its XPath, then save changes with the normal editor save shortcut.
-7. Use the Steps or Schema actions to compare with another environment or replace Steps from another environment.
+7. Use the Steps or Schema actions to choose **Working copy vs Source**, **Working copy vs Target Environment**, or **Source vs Target Environment**, or replace Steps from another environment.
 8. Commit generated `.ouaf` and `.xml` files with the normal Git integration in VS Code.
 
 ## Extension Settings

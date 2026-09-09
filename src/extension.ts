@@ -37,6 +37,21 @@ interface ServiceScriptSectionItem {
 
 type ExplorerItem = EnvironmentProfile | ComponentTypeItem | ServiceScriptItem | ServiceScriptSectionItem;
 
+class CompareDocumentProvider implements vscode.TextDocumentContentProvider {
+	private readonly contents = new Map<string, string>();
+	private nextId = 0;
+
+	public provideTextDocumentContent(uri: vscode.Uri): string {
+		return this.contents.get(uri.toString()) ?? '';
+	}
+
+	public document(content: string, language: string): vscode.Uri {
+		const uri = vscode.Uri.parse(`ouaf-compare:/${this.nextId++}.${language}`);
+		this.contents.set(uri.toString(), content);
+		return uri;
+	}
+}
+
 class OuafTreeDataProvider implements vscode.TreeDataProvider<ExplorerItem> {
 	private readonly changed = new vscode.EventEmitter<void>();
 	private readonly serviceScripts = new Map<string, ServiceScript[]>();
@@ -311,9 +326,11 @@ function componentIcon(type: ComponentSelection['type']): string {
 export function activate(context: vscode.ExtensionContext): void {
 	const store = new OuafStore(context.workspaceState, context.secrets);
 	const client = new OuafClient(store);
+	const compareDocuments = new CompareDocumentProvider();
 	const provider = new OuafTreeDataProvider(store, client, context.workspaceState);
 	const treeView = vscode.window.createTreeView('ouaf-config-manager.explorer', { treeDataProvider: provider, canSelectMany: true });
 	context.subscriptions.push(treeView);
+	context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider('ouaf-compare', compareDocuments));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.addEnvironment', () => openEnvironmentPanel(context, store, client, provider)));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.editEnvironment', (argument?: string | EnvironmentProfile | vscode.TreeItem) => {
 		const profileName = getEnvironmentName(argument);
@@ -338,7 +355,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (profiles.length < 2) { vscode.window.showWarningMessage('Add at least two OUAF environments before comparing.'); return; }
 		const sourcePick = await profilePick(store, 'Source environment');
 		const targetPick = await profilePick(store, 'Target environment', sourcePick?.name);
-		if (sourcePick && targetPick) { await compare(client, sourcePick, targetPick, picked); }
+		if (sourcePick && targetPick) { await compare(client, compareDocuments, sourcePick, targetPick, picked); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.openServiceScript', async (item?: ServiceScriptItem | ServiceScriptSectionItem) => {
 		const script = item && 'section' in item ? item.script : item;
@@ -391,8 +408,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (!script) { return; }
 		const source = store.profiles().find((profile) => profile.name === script.environmentName);
 		if (!source) { return; }
-		const target = await profilePick(store, 'Compare with environment', source.name);
-		if (target) { await compareServiceScript(client, source, target, script); }
+		const target = await pickServiceScriptCompareTarget(store, source);
+		if (target) { await compareServiceScript(client, compareDocuments, source, target, script); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.replaceServiceScriptSteps', async (item?: ServiceScriptSectionItem | ServiceScriptItem) => {
 		const script = getScriptFromSteps(item);
@@ -413,8 +430,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (!script) { return; }
 		const source = store.profiles().find((profile) => profile.name === script.environmentName);
 		if (!source) { return; }
-		const target = await profilePick(store, 'Compare schema with environment', source.name);
-		if (target) { await compareServiceScriptSchema(client, source, target, script); }
+		const target = await pickServiceScriptCompareTarget(store, source);
+		if (target) { await compareServiceScriptSchema(client, compareDocuments, source, target, script); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.filterServiceScripts', async (item?: ComponentTypeItem) => {
 		if (!item) { return; }
@@ -804,43 +821,77 @@ async function profilePick(store: OuafStore, placeHolder: string, excludedName?:
 	return picked?.profile;
 }
 
-async function compare(client: OuafClient, source: EnvironmentProfile, target: EnvironmentProfile, component: ComponentSelection): Promise<void> {
+async function pickServiceScriptCompareTarget(store: OuafStore, source: EnvironmentProfile): Promise<{ profile: EnvironmentProfile; useLocal: boolean } | undefined> {
+	const choice = await vscode.window.showQuickPick([
+		'Working copy vs Source',
+		'Source vs Target Environment',
+		'Working copy vs Target Environment',
+	], { placeHolder: 'Compare with' });
+	if (!choice) { return undefined; }
+	if (choice === 'Working copy vs Source') { return { profile: source, useLocal: true }; }
+	const target = await profilePick(store, 'Target environment', source.name);
+	return target ? { profile: target, useLocal: choice === 'Working copy vs Target Environment' } : undefined;
+}
+
+async function compare(client: OuafClient, documents: CompareDocumentProvider, source: EnvironmentProfile, target: EnvironmentProfile, component: ComponentSelection): Promise<void> {
 	try {
 		const [sourceContent, targetContent] = await Promise.all([client.fetch(source, component), client.fetch(target, component)]);
-		const left = await vscode.workspace.openTextDocument({ language: 'json', content: sourceContent });
-		const right = await vscode.workspace.openTextDocument({ language: 'json', content: targetContent });
-		await vscode.commands.executeCommand('vscode.diff', left.uri, right.uri, `${component.name}: ${source.name} <-> ${target.name}`);
+		const left = documents.document(sourceContent, 'json');
+		const right = documents.document(targetContent, 'json');
+		await vscode.commands.executeCommand('vscode.diff', left, right, `${component.name}: ${source.name} <-> ${target.name}`);
 	} catch (error) { showError(error); }
 }
 
-async function compareServiceScript(client: OuafClient, source: EnvironmentProfile, target: EnvironmentProfile, script: ServiceScriptItem): Promise<void> {
+async function compareServiceScript(client: OuafClient, documents: CompareDocumentProvider, source: EnvironmentProfile, target: { profile: EnvironmentProfile; useLocal: boolean }, script: ServiceScriptItem): Promise<void> {
 	try {
-		const sourceContent = await readLocalServiceScript(serviceScriptFile(source, script));
-		const sourceText = sourceContent === undefined
-			? await fetchForCompare(client, source, script)
-			: Buffer.from(sourceContent).toString('utf8');
-		const targetContent = await fetchForCompare(client, target, script);
-		const left = await vscode.workspace.openTextDocument({ language: 'groovy', content: sourceText });
-		const right = await vscode.workspace.openTextDocument({ language: 'groovy', content: targetContent });
-		await vscode.commands.executeCommand('vscode.diff', left.uri, right.uri, `${script.name}: ${source.name} <-> ${target.name}`);
+		const isSourceLocal = target.useLocal;
+		const localContent = isSourceLocal ? await readLocalServiceScript(serviceScriptFile(source, script)) : undefined;
+		if (isSourceLocal && localContent === undefined) {
+			vscode.window.showWarningMessage(`No local Steps copy exists for ${script.name} in ${source.name}. Check out the script before comparing.`);
+			return;
+		}
+		const leftContent = isSourceLocal
+			? Buffer.from(localContent as Uint8Array).toString('utf8')
+			: await fetchForCompare(client, source, script);
+		const rightContent = await fetchForCompare(client, target.profile, script);
+		const left = documents.document(leftContent, 'groovy');
+		const right = documents.document(rightContent, 'groovy');
+		const leftName = isSourceLocal ? 'local' : `${source.name} server`;
+		const rightName = `${target.profile.name} server`;
+		await vscode.commands.executeCommand('vscode.diff', left, right, `${script.name}: ${leftName} <-> ${rightName}`);
 	} catch (error) {
 		showError(error);
 	}
 }
 
-async function compareServiceScriptSchema(client: OuafClient, source: EnvironmentProfile, target: EnvironmentProfile, script: ServiceScriptItem): Promise<void> {
+async function compareServiceScriptSchema(client: OuafClient, documents: CompareDocumentProvider, source: EnvironmentProfile, target: { profile: EnvironmentProfile; useLocal: boolean }, script: ServiceScriptItem): Promise<void> {
 	try {
-		const sourceContent = await readLocalServiceScript(serviceScriptSchemaFile(source, script));
-		const sourceText = formatXml(sourceContent === undefined
-			? await client.serviceScriptSchema(source, script.name)
-			: Buffer.from(sourceContent).toString('utf8'));
-		const targetText = formatXml(await client.serviceScriptSchema(target, script.name));
-		const left = await vscode.workspace.openTextDocument({ language: 'xml', content: sourceText });
-		const right = await vscode.workspace.openTextDocument({ language: 'xml', content: targetText });
-		await vscode.commands.executeCommand('vscode.diff', left.uri, right.uri, `${script.name} schema: ${source.name} <-> ${target.name}`);
+		const isSourceLocal = target.useLocal;
+		const localContent = isSourceLocal ? await readLocalServiceScript(serviceScriptSchemaFile(source, script)) : undefined;
+		if (isSourceLocal && localContent === undefined) {
+			vscode.window.showWarningMessage(`No local Schema copy exists for ${script.name} in ${source.name}. Check out the script before comparing.`);
+			return;
+		}
+		const leftText = formatXml(isSourceLocal
+			? Buffer.from(localContent as Uint8Array).toString('utf8')
+			: await client.serviceScriptSchema(source, script.name));
+		const rightText = formatXml(await client.serviceScriptSchema(target.profile, script.name));
+		const left = documents.document(leftText, 'xml');
+		const right = documents.document(rightText, 'xml');
+		const leftName = isSourceLocal ? 'local' : `${source.name} server`;
+		const rightName = `${target.profile.name} server`;
+		await vscode.commands.executeCommand('vscode.diff', left, right, `${script.name} schema: ${leftName} <-> ${rightName}`);
 	} catch (error) {
 		showError(error);
 	}
+}
+
+async function readLocalCompareContent(file: vscode.Uri, section: string, scriptName: string, environmentName: string): Promise<string> {
+	const content = await readLocalServiceScript(file);
+	if (content === undefined) {
+		throw new Error(`No local ${section} copy exists for ${scriptName} in ${environmentName}. Check out the script before comparing.`);
+	}
+	return Buffer.from(content).toString('utf8');
 }
 
 async function fetchForCompare(client: OuafClient, profile: EnvironmentProfile, script: ServiceScriptItem): Promise<string> {
