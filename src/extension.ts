@@ -336,6 +336,15 @@ export function activate(context: vscode.ExtensionContext): void {
 		const profileName = getEnvironmentName(argument);
 		openEnvironmentPanel(context, store, client, provider, profileName);
 	}));
+	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.removeEnvironment', async (argument?: string | EnvironmentProfile | vscode.TreeItem) => {
+		const profileName = getEnvironmentName(argument);
+		if (!profileName) { return; }
+		const confirmation = await vscode.window.showWarningMessage(`Remove OUAF environment ${profileName}?`, { modal: true }, 'Remove');
+		if (confirmation !== 'Remove') { return; }
+		await store.removeProfile(profileName);
+		provider.refreshDisplay(profileName);
+		vscode.window.showInformationMessage(`Removed OUAF environment ${profileName}.`);
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.refresh', async () => {
 		try { await provider.refresh(client); } catch (error) { showError(error); }
 	}));
@@ -618,10 +627,11 @@ function renderTree() {
 		const error = xmlDocument.querySelector('parsererror');
 		if (error) { tree.textContent = 'Unable to parse XML: ' + error.textContent; return; }
 		function renderElement(element, parent) {
+			const children = Array.from(element.children);
 			const row = window.document.createElement('div');
 			row.className = 'node';
 			const attributes = Array.from(element.attributes).map((attribute) => ' ' + attribute.name + '=\"' + attribute.value + '\"').join('');
-			row.innerHTML = highlightXml('<' + element.tagName + attributes + '>');
+			row.innerHTML = highlightXml('<' + element.tagName + attributes + '>' + (children.length ? '' : '</' + element.tagName + '>'));
 			row.addEventListener('click', () => {
 				window.document.querySelectorAll('.selected').forEach((item) => item.classList.remove('selected'));
 				row.classList.add('selected');
@@ -632,17 +642,18 @@ function renderTree() {
 				vscode.postMessage({ type: 'copyXPath', xpath: selectedPath });
 			});
 			parent.appendChild(row);
-			const children = Array.from(element.children);
 			if (children.length) {
 				const group = window.document.createElement('div');
 				group.className = 'children';
 				parent.appendChild(group);
 				children.forEach((child) => renderElement(child, group));
 			}
-			const endRow = window.document.createElement('div');
-			endRow.className = 'node end-element';
-			endRow.innerHTML = highlightXml('</' + element.tagName + '>');
-			parent.appendChild(endRow);
+			if (children.length) {
+				const endRow = window.document.createElement('div');
+				endRow.className = 'node end-element';
+				endRow.innerHTML = highlightXml('</' + element.tagName + '>');
+				parent.appendChild(endRow);
+			}
 		}
 		if (xmlDocument.documentElement) { renderElement(xmlDocument.documentElement, tree); }
 	} catch (error) { tree.textContent = String(error); }
@@ -933,10 +944,11 @@ function showError(error: unknown): void { vscode.window.showErrorMessage(`OUAF 
 
 export function deactivate(): void {}
 
-function openEnvironmentPanel(context: vscode.ExtensionContext, store: OuafStore, client: OuafClient, provider: OuafTreeDataProvider, profileName?: string): void {
+async function openEnvironmentPanel(context: vscode.ExtensionContext, store: OuafStore, client: OuafClient, provider: OuafTreeDataProvider, profileName?: string): Promise<void> {
 		const existing = store.profiles().find((profile) => profile.name === profileName);
+		const credentials = existing ? await store.apiCredentialsFor(existing.name) : undefined;
 		const panel = vscode.window.createWebviewPanel('ouafEnvironment', existing ? 'Edit OUAF Environment' : 'Add OUAF Environment', vscode.ViewColumn.One, { enableScripts: true });
-		panel.webview.html = environmentForm(panel.webview, existing, vscode.workspace.getConfiguration('ouaf-config-manager').get<string>('defaultApiPath', '/api/ouaf/config'));
+		panel.webview.html = environmentForm(panel.webview, existing, vscode.workspace.getConfiguration('ouaf-config-manager').get<string>('defaultApiPath', '/api/ouaf/config'), credentials?.username);
 		panel.webview.onDidReceiveMessage(async (message: EnvironmentMessage) => {
 			await handleEnvironmentMessage(message, panel, store, client, provider);
 		}, undefined, context.subscriptions);
@@ -986,7 +998,7 @@ async function saveEnvironment(message: EnvironmentMessage, panel: vscode.Webvie
 	}
 }
 
-function environmentForm(webview: vscode.Webview, profile: EnvironmentProfile | undefined, defaultApiPath: string): string {
+function environmentForm(webview: vscode.Webview, profile: EnvironmentProfile | undefined, defaultApiPath: string, apiUsername?: string): string {
 	const value = (input: string | undefined): string => escapeHtml(input || '');
 	const database = profile?.database;
 	const authType = profile?.authType || 'bearer';
@@ -995,7 +1007,7 @@ function environmentForm(webview: vscode.Webview, profile: EnvironmentProfile | 
 		:root{color-scheme:light dark}body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);background:var(--vscode-editor-background);padding:24px;max-width:860px;margin:auto}h1{font-size:22px;font-weight:600;margin:0 0 6px}p{color:var(--vscode-descriptionForeground);margin:0 0 24px}.section{border-top:1px solid var(--vscode-panel-border);padding:20px 0}.section h2{font-size:15px;margin:0 0 14px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px}.field{display:flex;flex-direction:column;gap:6px}.wide{grid-column:1/-1}label{font-size:12px;color:var(--vscode-descriptionForeground)}input,select{box-sizing:border-box;width:100%;padding:8px 9px;border:1px solid var(--vscode-input-border);background:var(--vscode-input-background);color:var(--vscode-input-foreground);border-radius:3px}input:focus,select:focus{outline:1px solid var(--vscode-focusBorder)}.actions{display:flex;justify-content:flex-end;gap:8px;padding-top:22px}button{padding:8px 16px;border:1px solid var(--vscode-button-border);border-radius:3px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);cursor:pointer}button.secondary{background:transparent;color:var(--vscode-foreground)}button.test{justify-self:start;padding:6px 12px}.status{font-size:12px;min-height:18px;color:var(--vscode-descriptionForeground)}.success{color:var(--vscode-testing-iconPassed)}.failure{color:var(--vscode-testing-iconFailed)}.hidden{display:none}@media(max-width:600px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
 		</style></head><body><h1>${profile ? 'Edit' : 'Add'} OUAF environment</h1><p>Store connection metadata once, then use it for compare, refresh, and checkout operations.</p><form id="form">
 		<div class="section"><h2>Environment</h2><div class="grid"><div class="field"><label for="name">Name</label><input id="name" required value="${value(profile?.name)}" placeholder="Development"></div><div class="field"><label for="kind">Type</label><select id="kind"><option value="dev" ${profile?.kind === 'dev' ? 'selected' : ''}>Development</option><option value="uat" ${profile?.kind === 'uat' ? 'selected' : ''}>UAT</option><option value="prod" ${profile?.kind === 'prod' ? 'selected' : ''}>Production</option></select></div></div></div>
-		<div class="section"><h2>OUAF API</h2><div class="grid"><div class="field wide"><label for="baseUrl">Base URL</label><input id="baseUrl" type="url" required value="${value(profile?.baseUrl)}" placeholder="https://ouaf.example.com"></div><div class="field wide"><label for="apiPath">Configuration API path</label><input id="apiPath" required value="${value(profile?.apiPath || defaultApiPath)}" placeholder="/api/ouaf/config"></div><div class="field"><label for="authType">Authentication</label><select id="authType"><option value="none" ${authType === 'none' ? 'selected' : ''}>None</option><option value="bearer" ${authType === 'bearer' ? 'selected' : ''}>Bearer token</option><option value="basic" ${authType === 'basic' ? 'selected' : ''}>Basic authentication</option></select></div><div class="field" id="tokenField"><label for="token">Bearer token</label><input id="token" type="password" placeholder="Leave blank to keep existing"></div><div class="field hidden" id="basicUsernameField"><label for="apiUsername">API username</label><input id="apiUsername" value=""></div><div class="field hidden" id="basicPasswordField"><label for="apiPassword">API password</label><input id="apiPassword" type="password" placeholder="Leave blank to keep existing"></div><button type="button" class="test" id="testApi">Test API connection</button><div class="status wide" id="apiStatus"></div></div></div>
+		<div class="section"><h2>OUAF API</h2><div class="grid"><div class="field wide"><label for="baseUrl">Base URL</label><input id="baseUrl" type="url" required value="${value(profile?.baseUrl)}" placeholder="https://ouaf.example.com"></div><div class="field wide"><label for="apiPath">Configuration API path</label><input id="apiPath" required value="${value(profile?.apiPath || defaultApiPath)}" placeholder="/api/ouaf/config"></div><div class="field"><label for="authType">Authentication</label><select id="authType"><option value="none" ${authType === 'none' ? 'selected' : ''}>None</option><option value="bearer" ${authType === 'bearer' ? 'selected' : ''}>Bearer token</option><option value="basic" ${authType === 'basic' ? 'selected' : ''}>Basic authentication</option></select></div><div class="field" id="tokenField"><label for="token">Bearer token</label><input id="token" type="password" placeholder="Leave blank to keep existing"></div><div class="field hidden" id="basicUsernameField"><label for="apiUsername">API username</label><input id="apiUsername" value="${value(apiUsername)}"></div><div class="field hidden" id="basicPasswordField"><label for="apiPassword">API password</label><input id="apiPassword" type="password" placeholder="Leave blank to keep existing"></div><button type="button" class="test" id="testApi">Test API connection</button><div class="status wide" id="apiStatus"></div></div></div>
 		<div class="section"><h2>Local script files</h2><div class="grid"><div class="field wide"><label for="localDirectory">Checkout directory</label><input id="localDirectory" value="${value(profile?.localDirectory)}" placeholder="C:\\ouaf-scripts"></div></div></div>
 		<div class="section"><h2>Oracle database</h2><div class="grid"><div class="field"><label for="dbHost">Host</label><input id="dbHost" value="${value(database?.host)}" placeholder="db.example.com"></div><div class="field"><label for="dbPort">Port</label><input id="dbPort" value="${value(database?.port || '1521')}" placeholder="1521"></div><div class="field"><label for="dbService">Service name / SID</label><input id="dbService" value="${value(database?.service)}"></div><div class="field"><label for="dbUser">Database user</label><input id="dbUser" value="${value(database?.user)}"></div><div class="field"><label for="dbPassword">Database password</label><input id="dbPassword" type="password" placeholder="Leave blank to keep existing"></div><button type="button" class="test" id="testDatabase">Test database connection</button><div class="status wide" id="databaseStatus"></div></div></div>
 		<div class="actions"><button type="button" class="secondary" id="cancel">Cancel</button><button type="submit">Save environment</button></div></form><script nonce="${nonce}">

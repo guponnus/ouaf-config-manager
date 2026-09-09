@@ -88,6 +88,17 @@ export class OuafStore {
 		await this.saveSecret(`ouaf.database.password.${profile.name}`, credentials?.databasePassword);
 	}
 
+	public async removeProfile(profileName: string): Promise<void> {
+		await this.state.update(OuafStore.profilesKey, this.profiles().filter((profile) => profile.name !== profileName));
+		await this.setEnvironmentConnected(profileName, false);
+		await Promise.all([
+			this.secrets.delete(`ouaf.token.${profileName}`),
+			this.secrets.delete(`ouaf.api.username.${profileName}`),
+			this.secrets.delete(`ouaf.api.password.${profileName}`),
+			this.secrets.delete(`ouaf.database.password.${profileName}`),
+		]);
+	}
+
 	private async saveSecret(key: string, value: string | undefined): Promise<void> {
 		if (value !== undefined) {
 			await this.secrets.store(key, value);

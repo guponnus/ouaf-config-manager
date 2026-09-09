@@ -20,6 +20,7 @@
     "commands": [
       { "command": "ouaf-config-manager.addEnvironment", "title": "OUAF: Add Environment", "icon": "$(add)" },
       { "command": "ouaf-config-manager.editEnvironment", "title": "OUAF: Edit Environment", "icon": "$(edit)" },
+      { "command": "ouaf-config-manager.removeEnvironment", "title": "OUAF: Remove Environment", "icon": "$(trash)" },
       { "command": "ouaf-config-manager.compare", "title": "OUAF: Compare Component", "icon": "$(compare-changes)" },
       { "command": "ouaf-config-manager.openServiceScript", "title": "OUAF: Open Service Script", "icon": "$(go-to-file)" },
       { "command": "ouaf-config-manager.refreshServiceScript", "title": "OUAF: Refresh Service Script from API", "icon": "$(cloud-download)" },
@@ -63,6 +64,7 @@
       ],
       "view/item/context": [
         { "command": "ouaf-config-manager.editEnvironment", "when": "view == ouaf-config-manager.explorer && viewItem =~ /^environment/", "group": "inline@1" },
+        { "command": "ouaf-config-manager.removeEnvironment", "when": "view == ouaf-config-manager.explorer && viewItem =~ /^environment/", "group": "inline@2" },
         { "command": "ouaf-config-manager.connectEnvironment", "when": "view == ouaf-config-manager.explorer && viewItem == environmentDisconnected", "group": "inline@2" },
         { "command": "ouaf-config-manager.disconnectEnvironment", "when": "view == ouaf-config-manager.explorer && viewItem == environmentConnected", "group": "inline@2" },
         { "command": "ouaf-config-manager.filterServiceScripts", "when": "view == ouaf-config-manager.explorer && viewItem == serviceScriptType", "group": "inline@1" },
