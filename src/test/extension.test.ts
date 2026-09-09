@@ -1,15 +1,15 @@
 import * as assert from 'assert';
 
-// You can import and use all API from the 'vscode' module
-// as well as import your extension to test it
 import * as vscode from 'vscode';
-// import * as myExtension from '../../extension';
+import { buildFilteredServiceScriptQuery } from '../ouaf';
 
 suite('Extension Test Suite', () => {
 	vscode.window.showInformationMessage('Start all tests.');
 
-	test('Sample test', () => {
-		assert.strictEqual(-1, [1, 2, 3].indexOf(5));
-		assert.strictEqual(-1, [1, 2, 3].indexOf(0));
+	test('filtered service scripts match code or description', () => {
+		const query = buildFilteredServiceScriptQuery();
+		assert.ok(query.toLowerCase().includes('lower(scr_cd) like lower(:filter_cd)'));
+		assert.ok(query.toLowerCase().includes('lower(descr254) like lower(:filter_cd)'));
+		assert.ok(query.toLowerCase().includes('or'));
 	});
 });

@@ -43,13 +43,18 @@ const SERVICE_SCRIPT_QUERY = `
 	  AND LANGUAGE_CD = 'ENG'
 	ORDER BY DESCR254`;
 
-const FILTERED_SERVICE_SCRIPT_QUERY = `
+export function buildFilteredServiceScriptQuery(): string {
+	return `
 	SELECT SCR_CD, DESCR254
 	FROM CI_SCR_L
-	WHERE LOWER(SCR_CD) LIKE LOWER(:FILTER_CD)
+	WHERE (LOWER(SCR_CD) LIKE LOWER(:FILTER_CD)
+	   OR LOWER(DESCR254) LIKE LOWER(:FILTER_CD))
 	  AND OWNER_FLG = 'CM'
 	  AND LANGUAGE_CD = 'ENG'
 	ORDER BY DESCR254`;
+}
+
+const FILTERED_SERVICE_SCRIPT_QUERY = buildFilteredServiceScriptQuery();
 
 const SERVICE_SCRIPT_API_NAME = 'CmScriptAsTextViewer';
 
@@ -157,7 +162,7 @@ export class OuafClient {
 	public async serviceScripts(profile: EnvironmentProfile, filter?: string, credentials?: Credentials): Promise<ServiceScript[]> {
 		const connection = await this.openDatabase(profile, credentials?.databasePassword);
 		try {
-			const query = filter ? FILTERED_SERVICE_SCRIPT_QUERY : SERVICE_SCRIPT_QUERY;
+			const query = filter ? buildFilteredServiceScriptQuery() : SERVICE_SCRIPT_QUERY;
 			const binds = filter ? { FILTER_CD: `%${filter}%` } : [];
 			const result = await connection.execute<ServiceScriptRow>(query, binds, {
 				outFormat: oracledb.OUT_FORMAT_OBJECT,
