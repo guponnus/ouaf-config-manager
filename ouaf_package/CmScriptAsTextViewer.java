@@ -1,4 +1,4 @@
-package com.splwg.cm.domain.ees.common;
+package com.splwg.cm.domain.common;
 
 import com.splwg.base.api.service.DataElement;
 import com.splwg.base.domain.common.script.Script;
@@ -11,7 +11,7 @@ import com.splwg.shared.common.ApplicationError;
 
 
 /**
- * @author GM
+ * @author Guru
  *
 @QueryPage (program = CMSCRTEXTP, secured = false, service = CMSCRTEXTP, modules = {},
  *      body = @DataElement (contents = {@DataField (name = SCHEMA_DEFN) 
