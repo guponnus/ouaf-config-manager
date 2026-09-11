@@ -2,6 +2,7 @@
   "name": "ouaf-config-manager",
   "displayName": "ouaf-config-manager",
   "description": "Extension to code and manage OUAF components",
+  "icon": "resources/image_logo.jpg",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.136.0"
@@ -54,7 +55,7 @@
         {
           "id": "ouaf-config-manager-activitybar",
           "title": "OUAF Configuration",
-          "icon": "resources/ouaf.svg"
+          "icon": "resources/oicon.svg"
         }
       ]
     },
