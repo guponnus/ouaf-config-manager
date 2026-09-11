@@ -27,25 +27,6 @@ OUAF Configuration Manager helps teams inspect and maintain Oracle Utilities App
 - Refresh or check out snapshots into `.ouaf/<environment>/<component-type>/`, ready for Git versioning.
 - Keep tokens in VS Code Secret Storage; environment metadata is also saved to the project at `.ouaf/environments.json` so it can be shared with another checkout.
 
-The extension uses this REST adapter endpoint for non-Service Script API component operations:
-
-`<baseUrl>/<apiPath>/<componentType>/<componentName>`
-
-For example, a service script named `C1-DEMO` is requested as:
-
-`https://ouaf.example.com/api/ouaf/config/serviceScript/C1-DEMO`
-
-Service Script configuration uses the SOAP XAI endpoint `<baseUrl>/<apiPath>/CmScriptAsTextViewer`. The extension sends the script code and an `option` element:
-
-- Blank option: returns both `schemaDefinition` and `editDataArea`.
-- `S`: returns Steps in `editDataArea`.
-- `X`: returns Schema in `schemaDefinition`.
-- `D`: returns the selected Data Area XML in `schemaDefinition`; the request includes `schemaName` and `dataAreaName`.
-
-Schema content is formatted before display, saving, and comparison. Server content used for comparison is kept in memory and is not saved locally. The OUAF adapter must accept the selected authentication. Database operations use the Oracle Node.js driver directly in thin mode.
-
-The API test sends `GET <baseUrl>/<apiPath>` with the selected authentication. The database test opens an Oracle connection using the configured host, port, service, user, and password, then closes it. Refresh loads service scripts with `SELECT SCR_CD, DESCR254 FROM CI_SCR_L WHERE OWNER_FLG='CM' AND LANGUAGE_CD='ENG' ORDER BY DESCR254`.
-
 ## OUAF Deployment Prerequisites
 
 The extension requires supporting configuration and Java code to be installed in the OUAF application. The deployment artifacts are included in [`ouaf_package`](ouaf_package):
