@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ComponentSelection, componentTypes, Credentials, EnvironmentProfile, OuafClient, OuafStore, ServiceScript } from './ouaf';
+import { ComponentSelection, componentTypes, Credentials, EnvironmentProfile, OuafClient, OuafStore, ProjectEnvironmentConfiguration, ServiceScript, ServiceScriptDataArea } from './ouaf';
 
 interface EnvironmentMessage {
 	type: 'cancel' | 'save' | 'testApi' | 'testDatabase';
@@ -35,7 +35,14 @@ interface ServiceScriptSectionItem {
 	script: ServiceScriptItem;
 }
 
-type ExplorerItem = EnvironmentProfile | ComponentTypeItem | ServiceScriptItem | ServiceScriptSectionItem;
+interface ServiceScriptDataAreaItem {
+	type: 'serviceScriptDataArea';
+	dataArea: ServiceScriptDataArea;
+	script: ServiceScriptItem;
+}
+
+type ExplorerItem = EnvironmentProfile | ComponentTypeItem | ServiceScriptItem | ServiceScriptSectionItem | ServiceScriptDataAreaItem;
+type ServiceScriptCheckoutItem = ServiceScriptItem | ServiceScriptSectionItem;
 
 class CompareDocumentProvider implements vscode.TextDocumentContentProvider {
 	private readonly contents = new Map<string, string>();
@@ -51,6 +58,8 @@ class CompareDocumentProvider implements vscode.TextDocumentContentProvider {
 		return uri;
 	}
 }
+
+const schemaEditorFiles = new WeakMap<vscode.WebviewPanel, vscode.Uri>();
 
 class OuafTreeDataProvider implements vscode.TreeDataProvider<ExplorerItem> {
 	private readonly changed = new vscode.EventEmitter<void>();
@@ -166,6 +175,13 @@ class OuafTreeDataProvider implements vscode.TreeDataProvider<ExplorerItem> {
 		if (item.type === 'serviceScriptSection') {
 			return this.serviceScriptSectionTreeItem(item);
 		}
+		if (item.type === 'serviceScriptDataArea') {
+			const treeItem = new vscode.TreeItem(`${item.dataArea.schemaTypeFlag} - ${item.dataArea.daName}`);
+			treeItem.id = `${item.script.environmentName}:${item.script.name}:dataArea:${item.dataArea.daName}`;
+			treeItem.contextValue = 'serviceScript.dataArea';
+			treeItem.command = { command: 'ouaf-config-manager.openServiceScriptDataArea', title: 'Open Service Script Data Area', arguments: [item] };
+			return treeItem;
+		}
 		return this.componentTreeItem(item);
 	}
 
@@ -182,8 +198,17 @@ class OuafTreeDataProvider implements vscode.TreeDataProvider<ExplorerItem> {
 			}));
 		}
 		if (item.type === 'serviceScriptSection') {
-			return [];
+			if (item.section !== 'dataArea') { return []; }
+			const profile = this.store.profiles().find((environment) => environment.name === item.script.environmentName);
+			if (!profile) { return []; }
+			try {
+				return (await this.client.serviceScriptDataAreas(profile, item.script.name)).map((dataArea) => ({ type: 'serviceScriptDataArea', dataArea, script: item.script }));
+			} catch (error) {
+				showError(error);
+				return [];
+			}
 		}
+		if (item.type === 'serviceScriptDataArea') { return []; }
 		if (isComponentTypeItem(item) && item.type === 'serviceScript') {
 			const filter = this.serviceScriptFilters.get(item.environmentName);
 			const scripts = await this.loadServiceScripts(item.environmentName, filter);
@@ -266,7 +291,7 @@ class OuafTreeDataProvider implements vscode.TreeDataProvider<ExplorerItem> {
 	}
 
 	private serviceScriptSectionTreeItem(section: ServiceScriptSectionItem): vscode.TreeItem {
-		const treeItem = new vscode.TreeItem(section.label, vscode.TreeItemCollapsibleState.None);
+		const treeItem = new vscode.TreeItem(section.label, section.section === 'dataArea' ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
 		treeItem.id = `${section.script.environmentName}:${section.script.name}:${section.section}`;
 		treeItem.contextValue = `serviceScript.${section.section}`;
 		const isDifferent = section.section === 'steps' ? section.script.isStepsDifferent : section.section === 'schema' && section.script.isSchemaDifferent;
@@ -323,12 +348,18 @@ function componentIcon(type: ComponentSelection['type']): string {
 	return type === 'serviceScript' ? 'symbol-method' : type === 'businessObject' ? 'symbol-class' : type === 'businessService' ? 'server' : 'layout';
 }
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
 	const store = new OuafStore(context.workspaceState, context.secrets);
+	try {
+		await loadProjectConfiguration(store);
+	} catch (error) {
+		showError(new Error(`Could not load the project configuration. ${error instanceof Error ? error.message : String(error)}`));
+	}
 	const client = new OuafClient(store);
 	const compareDocuments = new CompareDocumentProvider();
 	const provider = new OuafTreeDataProvider(store, client, context.workspaceState);
 	const treeView = vscode.window.createTreeView('ouaf-config-manager.explorer', { treeDataProvider: provider, canSelectMany: true });
+	const dataAreaPanels = new Map<string, vscode.WebviewPanel>();
 	context.subscriptions.push(treeView);
 	context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider('ouaf-compare', compareDocuments));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.addEnvironment', () => openEnvironmentPanel(context, store, client, provider)));
@@ -342,17 +373,34 @@ export function activate(context: vscode.ExtensionContext): void {
 		const confirmation = await vscode.window.showWarningMessage(`Remove OUAF environment ${profileName}?`, { modal: true }, 'Remove');
 		if (confirmation !== 'Remove') { return; }
 		await store.removeProfile(profileName);
+		await saveProjectConfiguration(store);
 		provider.refreshDisplay(profileName);
 		vscode.window.showInformationMessage(`Removed OUAF environment ${profileName}.`);
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.relocateLocalDirectory', async (argument?: string | EnvironmentProfile | vscode.TreeItem) => {
+		const profileName = getEnvironmentName(argument);
+		const profile = profileName ? store.profiles().find((item) => item.name === profileName) : undefined;
+		if (!profile) { return; }
+		const selected = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Use Checkout Directory' });
+		if (!selected?.[0]) { return; }
+		await store.saveProfile({ ...profile, localDirectory: selected[0].fsPath });
+		await saveProjectConfiguration(store);
+		vscode.window.showInformationMessage(`Checkout directory for ${profile.name} updated.`);
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.refresh', async () => {
 		try { await provider.refresh(client); } catch (error) { showError(error); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.connectEnvironment', async (profile?: EnvironmentProfile) => {
-		if (profile && !provider.isConnected(profile.name)) { await provider.toggleConnection(profile.name); }
+		if (profile && !provider.isConnected(profile.name)) {
+			await provider.toggleConnection(profile.name);
+			await saveProjectConfiguration(store);
+		}
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.disconnectEnvironment', async (profile?: EnvironmentProfile) => {
-		if (profile && provider.isConnected(profile.name)) { await provider.toggleConnection(profile.name); }
+		if (profile && provider.isConnected(profile.name)) {
+			await provider.toggleConnection(profile.name);
+			await saveProjectConfiguration(store);
+		}
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.collapseAll', () => {
 		void vscode.commands.executeCommand('workbench.actions.treeView.ouaf-config-manager.explorer.collapseAll');
@@ -398,6 +446,16 @@ export function activate(context: vscode.ExtensionContext): void {
 			showError(error);
 		}
 	}));
+	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.refreshServiceScriptDataArea', async (item?: ServiceScriptSectionItem | ServiceScriptDataAreaItem) => {
+		const script = item && 'section' in item ? item.section === 'dataArea' ? item.script : undefined : item?.script;
+		if (!script) { return; }
+		try {
+			provider.refreshDisplay(script.environmentName);
+			vscode.window.showInformationMessage(`Refreshed data areas for ${script.name}.`);
+		} catch (error) {
+			showError(error);
+		}
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.openServiceScriptSchema', async (section?: ServiceScriptSectionItem) => {
 		const script = section?.script;
 		if (!script || section.section !== 'schema') { return; }
@@ -410,6 +468,22 @@ export function activate(context: vscode.ExtensionContext): void {
 				? await client.serviceScriptSchema(profile, script.name)
 				: Buffer.from(localContent).toString('utf8');
 			openSchemaEditor(context, script.name, file, schema);
+		} catch (error) { showError(error); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.openServiceScriptDataArea', async (item?: ServiceScriptDataAreaItem) => {
+		if (!item || item.type !== 'serviceScriptDataArea') { return; }
+		const profile = store.profiles().find((environment) => environment.name === item.script.environmentName);
+		if (!profile) { return; }
+		try {
+			const content = await client.serviceScriptDataArea(profile, item.script.name, item.dataArea.schemaName, item.dataArea.daName);
+			const panelKey = `${item.script.environmentName}:${item.script.name}`;
+			const existingPanel = dataAreaPanels.get(panelKey);
+			const panel = openSchemaEditor(context, `${item.script.name} ${item.dataArea.daName}`, serviceScriptSchemaFile(profile, item.script), content, true, false, existingPanel);
+			dataAreaPanels.set(panelKey, panel);
+			panel.onDidDispose(() => {
+				if (dataAreaPanels.get(panelKey) === panel) { dataAreaPanels.delete(panelKey); }
+			}, undefined, context.subscriptions);
+			panel.reveal(panel.viewColumn ?? vscode.ViewColumn.One, true);
 		} catch (error) { showError(error); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('ouaf-config-manager.compareServiceScript', async (item?: ServiceScriptSectionItem | ServiceScriptItem) => {
@@ -473,10 +547,11 @@ export function activate(context: vscode.ExtensionContext): void {
 			return;
 		}
 		const selected = Array.isArray(item) ? item : item ? [item] : [];
-		const scripts = selected.map((selectedItem) => 'section' in selectedItem ? selectedItem.script : selectedItem);
+		const scripts = selected.filter((selectedItem): selectedItem is ServiceScriptCheckoutItem => !('section' in selectedItem) || selectedItem.section === 'steps' || selectedItem.section === 'schema');
 		if (!scripts.length) { return; }
-		const profile = store.profiles().find((environment) => environment.name === scripts[0].environmentName);
-		if (!profile || scripts.some((item) => item.environmentName !== profile.name)) { return; }
+		const firstScript = 'section' in scripts[0] ? scripts[0].script : scripts[0];
+		const profile = store.profiles().find((environment) => environment.name === firstScript.environmentName);
+		if (!profile || scripts.some((item) => ('section' in item ? item.script : item).environmentName !== profile.name)) { return; }
 		try {
 			await checkoutSelectedScripts(client, provider, store, scripts);
 		} catch (error) {
@@ -515,44 +590,58 @@ export function activate(context: vscode.ExtensionContext): void {
 			provider.refreshDisplay();
 		} catch (error) { showError(error); }
 	}));
+	context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((document) => {
+		if (document.uri.scheme !== 'file' || !document.uri.path.toLowerCase().endsWith('.ouaf')) { return; }
+		provider.refreshDisplay();
+	}));
 }
 
-async function checkoutSelectedScripts(client: OuafClient, provider: OuafTreeDataProvider, store: OuafStore, scripts: ServiceScriptItem[]): Promise<void> {
-	const uniqueScripts = [...new Map(scripts.map((script) => [script.name, script])).values()];
+async function checkoutSelectedScripts(client: OuafClient, provider: OuafTreeDataProvider, store: OuafStore, scripts: ServiceScriptCheckoutItem[]): Promise<void> {
+	const uniqueScripts = [...new Map(scripts.map((item) => {
+		const script = 'section' in item ? item.script : item;
+		const scope: 'all' | 'steps' | 'schema' = 'section' in item && item.section !== 'dataArea' ? item.section : 'all';
+		return [`${script.name}:${scope}`, { script, scope }];
+	})).values()];
 	if (!uniqueScripts.length) { vscode.window.showWarningMessage('No service scripts selected.'); return; }
-	const profile = store.profiles().find((item) => item.name === uniqueScripts[0].environmentName);
-	if (!profile || uniqueScripts.some((script) => script.environmentName !== profile.name)) { return; }
-	await Promise.all(uniqueScripts.map((script) => checkoutServiceScript(client, profile, script)));
+	const profile = store.profiles().find((item) => item.name === uniqueScripts[0].script.environmentName);
+	if (!profile || uniqueScripts.some(({ script }) => script.environmentName !== profile.name)) { return; }
+	await Promise.all(uniqueScripts.map(({ script, scope }) => checkoutServiceScript(client, profile, script, scope)));
 	provider.refreshDisplay(profile.name);
-	vscode.window.showInformationMessage(`Checked out ${uniqueScripts.length} service script${uniqueScripts.length === 1 ? '' : 's'}.`);
+	vscode.window.showInformationMessage(`Checked out ${uniqueScripts.length} service script part${uniqueScripts.length === 1 ? '' : 's'}.`);
 }
 
-function openSchemaEditor(context: vscode.ExtensionContext, scriptCode: string, file: vscode.Uri, schema: string): void {
-	const panel = vscode.window.createWebviewPanel(
+function openSchemaEditor(context: vscode.ExtensionContext, scriptCode: string, file: vscode.Uri, schema: string, showView = true, showEditor = true, existingPanel?: vscode.WebviewPanel): vscode.WebviewPanel {
+	const panel = existingPanel ?? vscode.window.createWebviewPanel(
 		'ouafSchemaEditor',
 		`${scriptCode} Schema`,
 		vscode.ViewColumn.One,
 		{ enableScripts: true, retainContextWhenHidden: true },
 	);
-	panel.webview.html = schemaEditorHtml(panel.webview, scriptCode, formatXml(schema));
-	panel.webview.onDidReceiveMessage(async (message: SchemaEditorMessage) => {
+	schemaEditorFiles.set(panel, file);
+	panel.title = `${scriptCode} Schema`;
+	panel.webview.html = schemaEditorHtml(panel.webview, scriptCode, formatXml(schema), showView, showEditor);
+	if (!existingPanel) { panel.webview.onDidReceiveMessage(async (message: SchemaEditorMessage) => {
 		if (message.type === 'copyXPath' && message.xpath) {
 			await vscode.env.clipboard.writeText(message.xpath);
 			return;
 		}
 		if (message.type !== 'saveSchema') { return; }
 		try {
-			await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(file, '..'));
-			await vscode.workspace.fs.writeFile(file, Buffer.from(formatXml(message.content), 'utf8'));
+			const currentFile = schemaEditorFiles.get(panel);
+			if (!currentFile) { return; }
+			await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(currentFile, '..'));
+			await vscode.workspace.fs.writeFile(currentFile, Buffer.from(formatXml(message.content), 'utf8'));
 		} catch (error) {
 			showError(error);
 		}
-	}, undefined, context.subscriptions);
+	}, undefined, context.subscriptions); }
+	return panel;
 }
 
-function schemaEditorHtml(webview: vscode.Webview, scriptCode: string, schema: string): string {
+function schemaEditorHtml(webview: vscode.Webview, scriptCode: string, schema: string, showView: boolean, showEditor: boolean): string {
 	const nonce = getNonce();
 	const escapedSchema = JSON.stringify(schema).replace(/</g, '\\u003c');
+	const tabs = showView && showEditor ? '<button class="tab active" data-tab="view">View</button><button class="tab" data-tab="editor">Edit</button>' : showView ? '<button class="tab active" data-tab="view">View</button>' : '<button class="tab active" data-tab="editor">Edit</button>';
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -587,8 +676,8 @@ button:hover { background: var(--vscode-button-hoverBackground); }
 </head>
 <body>
 <div class="toolbar"><label for="xpath">Selected element XPath</label><input id="xpath" readonly placeholder="Select an XML element in View"></div>
-<div class="content"><div id="tree"></div><div class="editor-wrap" hidden><pre id="highlight" aria-hidden="true"></pre><textarea id="editor" spellcheck="false"></textarea></div></div>
-<div class="tabs"><button class="tab active" data-tab="view">View</button><button class="tab" data-tab="editor">Edit</button></div>
+<div class="content"><div id="tree"${showView ? '' : ' hidden'}></div><div class="editor-wrap"${showView ? ' hidden' : ''}><pre id="highlight" aria-hidden="true"></pre><textarea id="editor" spellcheck="false"></textarea></div></div>
+<div class="tabs">${tabs}</div>
 <script nonce="${nonce}">
 let schemaText = ${escapedSchema};
 const vscode = acquireVsCodeApi();
@@ -631,8 +720,8 @@ function renderTree() {
 			const row = window.document.createElement('div');
 			row.className = 'node';
 			const attributes = Array.from(element.attributes).map((attribute) => ' ' + attribute.name + '=\"' + attribute.value + '\"').join('');
-			row.innerHTML = highlightXml('<' + element.tagName + attributes + '>' + (children.length ? '' : '</' + element.tagName + '>'));
-			row.addEventListener('click', () => {
+			row.innerHTML = highlightXml('<' + element.tagName + attributes + (children.length ? '>' : '/>'));
+			const selectElement = () => {
 				window.document.querySelectorAll('.selected').forEach((item) => item.classList.remove('selected'));
 				row.classList.add('selected');
 				const selectedPath = nodePath(element);
@@ -640,7 +729,8 @@ function renderTree() {
 				xpath.focus();
 				xpath.select();
 				vscode.postMessage({ type: 'copyXPath', xpath: selectedPath });
-			});
+			};
+			row.addEventListener('click', selectElement);
 			parent.appendChild(row);
 			if (children.length) {
 				const group = window.document.createElement('div');
@@ -652,6 +742,7 @@ function renderTree() {
 				const endRow = window.document.createElement('div');
 				endRow.className = 'node end-element';
 				endRow.innerHTML = highlightXml('</' + element.tagName + '>');
+				endRow.addEventListener('click', selectElement);
 				parent.appendChild(endRow);
 			}
 		}
@@ -676,7 +767,7 @@ editor.addEventListener('keydown', (event) => {
 	}
 });
 refreshHighlight();
-renderTree();
+if (${showView}) { renderTree(); }
 </script>
 </body>
 </html>`;
@@ -714,9 +805,10 @@ async function isServiceScriptSaved(profile: EnvironmentProfile, script: Service
 async function compareLocalScriptContent(client: OuafClient, profile: EnvironmentProfile, script: ServiceScript): Promise<{ isStepsDifferent: boolean; isSchemaDifferent: boolean }> {
 	const stepsFile = serviceScriptFile(profile, script);
 	const schemaFile = serviceScriptSchemaFile(profile, script);
-	const [localSteps, localSchema] = await Promise.all([readLocalServiceScript(stepsFile), readLocalServiceScript(schemaFile)]);
+	const openStepsDocument = vscode.workspace.textDocuments.find((document) => document.uri.toString() === stepsFile.toString());
+	const [localSteps, localSchema] = await Promise.all([openStepsDocument?.getText() ?? readLocalServiceScript(stepsFile), readLocalServiceScript(schemaFile)]);
 	const [serverSteps, serverSchema] = await Promise.all([
-		localSteps === undefined ? Promise.resolve(undefined) : client.fetch(profile, script).catch(() => undefined),
+		localSteps === undefined ? Promise.resolve(undefined) : client.serviceScriptSteps(profile, script.name).catch(() => undefined),
 		localSchema === undefined ? Promise.resolve(undefined) : client.serviceScriptSchema(profile, script.name).catch(() => undefined),
 	]);
 	return {
@@ -758,13 +850,30 @@ async function writeServiceScriptSchema(profile: EnvironmentProfile, script: Com
 	await vscode.workspace.fs.writeFile(file, Buffer.from(formatXml(content), 'utf8'));
 }
 
-async function checkoutServiceScript(client: OuafClient, profile: EnvironmentProfile, script: ComponentSelection): Promise<void> {
-	const [steps, schema] = await Promise.all([
-		client.serviceScriptSteps(profile, script.name),
-		client.serviceScriptSchema(profile, script.name),
-	]);
+async function checkoutServiceScript(client: OuafClient, profile: EnvironmentProfile, script: ComponentSelection, scope: 'all' | 'steps' | 'schema' = 'all'): Promise<void> {
+	if (scope === 'steps') {
+		const content = await client.serviceScriptSteps(profile, script.name);
+		await writeSnapshot(profile, script, content);
+		await replaceOpenStepsDocument(profile, script, content);
+		return;
+	}
+	if (scope === 'schema') {
+		await writeServiceScriptSchema(profile, script, await client.serviceScriptSchema(profile, script.name));
+		return;
+	}
+	const [steps, schema] = await Promise.all([client.serviceScriptSteps(profile, script.name), client.serviceScriptSchema(profile, script.name)]);
 	await writeSnapshot(profile, script, steps);
+	await replaceOpenStepsDocument(profile, script, steps);
 	await writeServiceScriptSchema(profile, script, schema);
+}
+
+async function replaceOpenStepsDocument(profile: EnvironmentProfile, script: ComponentSelection, content: string): Promise<void> {
+	const file = serviceScriptFile(profile, script);
+	const document = vscode.workspace.textDocuments.find((item) => item.uri.toString() === file.toString());
+	if (!document) { return; }
+	const edit = new vscode.WorkspaceEdit();
+	edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), content);
+	if (await vscode.workspace.applyEdit(edit)) { await document.save(); }
 }
 
 async function checkinServiceScripts(profile: EnvironmentProfile, scripts: ServiceScriptItem[]): Promise<void> {
@@ -990,12 +1099,58 @@ async function testEnvironmentConnection(message: EnvironmentMessage, panel: vsc
 async function saveEnvironment(message: EnvironmentMessage, panel: vscode.WebviewPanel, store: OuafStore, client: OuafClient, provider: OuafTreeDataProvider): Promise<void> {
 	try {
 		await store.saveProfile(message.profile!, message.credentials);
+		await saveProjectConfiguration(store);
 		await provider.refresh(client);
 		vscode.window.showInformationMessage(`Saved OUAF environment ${message.profile!.name}.`);
 		panel.dispose();
 	} catch (error) {
 		showError(error);
 	}
+}
+
+const projectConfigurationFile = '.ouaf/environments.json';
+
+async function loadProjectConfiguration(store: OuafStore): Promise<void> {
+	const workspace = vscode.workspace.workspaceFolders?.[0];
+	if (!workspace) { return; }
+	const file = vscode.Uri.joinPath(workspace.uri, projectConfigurationFile);
+	try {
+		const content = await vscode.workspace.fs.readFile(file);
+		const configuration = JSON.parse(Buffer.from(content).toString('utf8')) as ProjectEnvironmentConfiguration;
+		if (!Array.isArray(configuration.profiles)) { throw new Error('profiles must be an array.'); }
+		const profiles = configuration.profiles.map((profile) => ({
+			...profile,
+			localDirectory: profile.localDirectory && !isAbsolutePath(profile.localDirectory)
+				? vscode.Uri.joinPath(workspace.uri, profile.localDirectory).fsPath
+				: profile.localDirectory,
+		}));
+		await store.replaceProfiles(profiles, configuration.connectedEnvironments);
+	} catch (error) {
+		if ((error as vscode.FileSystemError).code === 'FileNotFound') { return; }
+		throw error;
+	}
+}
+
+async function saveProjectConfiguration(store: OuafStore): Promise<void> {
+	const workspace = vscode.workspace.workspaceFolders?.[0];
+	if (!workspace) { return; }
+	const profiles = store.profiles().map((profile) => ({
+		...profile,
+		localDirectory: profile.localDirectory ? portableLocalDirectory(workspace.uri, profile.localDirectory) : undefined,
+	}));
+	const configuration: ProjectEnvironmentConfiguration = { profiles, connectedEnvironments: store.connectedEnvironmentNames() };
+	const file = vscode.Uri.joinPath(workspace.uri, projectConfigurationFile);
+	await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspace.uri, '.ouaf'));
+	await vscode.workspace.fs.writeFile(file, Buffer.from(`${JSON.stringify(configuration, null, 2)}\n`, 'utf8'));
+}
+
+function isAbsolutePath(value: string): boolean {
+	return /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value) || value.startsWith('/');
+}
+
+function portableLocalDirectory(root: vscode.Uri, directory: string): string {
+	const relative = vscode.workspace.asRelativePath(vscode.Uri.file(directory), false);
+	return relative.startsWith('..') || isAbsolutePath(relative) ? directory : relative;
 }
 
 function environmentForm(webview: vscode.Webview, profile: EnvironmentProfile | undefined, defaultApiPath: string, apiUsername?: string): string {

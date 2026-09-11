@@ -23,7 +23,7 @@ OUAF Configuration Manager helps teams inspect and maintain Oracle Utilities App
 - Show local and changed status indicators in the explorer.
 - Connect or disconnect environments and collapse the explorer tree.
 - Refresh or check out snapshots into `.ouaf/<environment>/<component-type>/`, ready for Git versioning.
-- Keep tokens in VS Code Secret Storage; environment metadata is stored in workspace state.
+- Keep tokens in VS Code Secret Storage; environment metadata is also saved to the project at `.ouaf/environments.json` so it can be shared with another checkout.
 
 The extension uses this REST adapter endpoint for non-Service Script API component operations:
 
@@ -58,13 +58,15 @@ To try it:
 7. Use the Steps or Schema actions to choose **Working copy vs Source**, **Working copy vs Target Environment**, or **Source vs Target Environment**, or replace Steps from another environment.
 8. Commit generated `.ouaf` and `.xml` files with the normal Git integration in VS Code.
 
+When the project is opened in another directory, the extension loads profiles from `.ouaf/environments.json`. Credentials are never written to that file and must be entered again on the new machine or VS Code profile. If a configured checkout directory is no longer valid, right-click the environment in the OUAF Explorer and choose **OUAF: Relocate Checkout Directory**.
+
 ## Extension Settings
 
 - `ouaf-config-manager.defaultApiPath`: Default API path for new environments. Defaults to `/api/ouaf/config`.
 
 ## Local Files
 
-Checked-out files are stored under `.ouaf/<environment>/serviceScript/` unless an environment-specific local directory is configured. Steps use `.ouaf`; Schema uses `.xml`. Filenames are based on the Script code, with unsupported characters sanitized and trailing underscores removed.
+Checked-out files are stored under `.ouaf/<environment>/serviceScript/` unless an environment-specific local directory is configured. Steps use `.ouaf`; Schema uses `.xml`. Filenames are based on the Script code, with unsupported characters sanitized and trailing underscores removed. Relative checkout directories are stored relative to the project so they remain valid after moving the project.
 
 Check-in does not publish changes to OUAF. It archives active local files with a timestamped `.bak` suffix and removes the active local copies, allowing the explorer to return to the server state.
 
