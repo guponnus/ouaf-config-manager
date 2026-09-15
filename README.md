@@ -4,29 +4,20 @@ OUAF Configuration Manager helps teams inspect and maintain Oracle Utilities App
 
 ## Features
 
-- Register Development, UAT, and Production environments with an API URL and optional API token.
-- Choose `None`, Bearer token, or Basic authentication for each API environment.
-- Capture API username/password and database username/password; all passwords are stored in VS Code Secret Storage.
-- Capture database host, port, service, and user metadata per environment; credentials stay outside workspace state.
-- Test API and database connectivity directly from the environment form.
+- Register Development, UAT, and Production environments with an API URL and Database connection.
 - Browse Scripts from connected environments.
 - Filter Scripts by code or description and select multiple Scripts in the explorer.
 - Preserve Script filters and the "show only checked-out items" setting across refreshes and extension reloads.
 - Check out one or more Scripts, or all Scripts matching the active filter, including Steps and Schema.
-- Check out the complete Script, Steps only, or Schema only. Steps and Schema checkout use the OUAF `S` and `X` options respectively.
-- Open local Steps files when checked out; otherwise load them from the server.
 - Open Schema in a two-tab View/Edit panel. View shows a syntax-highlighted XML tree with selectable XPath elements and self-closing leaf elements such as `<emailId/>`; Edit provides an editable XML surface.
-- Expand a Script's Data Area section to load Data Areas from `CI_SCR_DA`, display them as `schema_type_flg - da_name`, and open the selected Data Area's XML in a View-only XPath panel.
-- Select an XML element to display its case-sensitive XPath, focus and select the XPath field, and copy the XPath automatically to the clipboard. List elements use a `[1]` XPath suffix.
+- Select an XML element to display its XPath, focus and select the XPath field, and copy the XPath automatically to the clipboard. List elements use a `[1]` XPath suffix.
 - Save Schema edits with the normal editor save shortcut; switching back to View reflects the current XML content.
 - Compare Steps or Schema from a local copy or server copy to a same-environment or target-environment server copy using VS Code's native diff editor.
 - Replace local Steps from another environment without changing the local Schema.
 - Check in by timestamping and removing active local copies, returning the Script to its server state.
 - Show local and changed status indicators in the explorer.
 - Connect or disconnect environments and collapse the explorer tree.
-- Refresh or check out snapshots into `.ouaf/<environment>/<component-type>/`, ready for Git versioning.
-- Keep tokens in VS Code Secret Storage; environment metadata is also saved to the project at `.ouaf/environments.json` so it can be shared with another checkout.
-
+![View/Edit Script Steps](resources/Script_steps.jpg)
 ## OUAF Deployment Prerequisites
 
 The extension requires supporting configuration and Java code to be installed in the OUAF application. The deployment artifacts are included in [`ouaf_package`](ouaf_package):
