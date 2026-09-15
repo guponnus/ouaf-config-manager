@@ -17,7 +17,14 @@ OUAF Configuration Manager helps teams inspect and maintain Oracle Utilities App
 - Check in by timestamping and removing active local copies, returning the Script to its server state.
 - Show local and changed status indicators in the explorer.
 - Connect or disconnect environments and collapse the explorer tree.
+  
 ![View/Edit Script Steps](resources/Script_steps.jpg)
+![capture schema xpath](resources/Script_xpath.jpg)
+![Edit Schema](resources/Script_schema_edit.jpg)
+![View Schema](resources/Script_schema_view.jpg)
+![Filter Scripts](resources/Script_filter.jpg)
+![Checkout Scripts local](resources/Script_checkout.jpg)
+
 ## OUAF Deployment Prerequisites
 
 The extension requires supporting configuration and Java code to be installed in the OUAF application. The deployment artifacts are included in [`ouaf_package`](ouaf_package):
