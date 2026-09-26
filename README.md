@@ -48,14 +48,13 @@ An OUAF API adapter and Oracle database access are required. The `oracledb` driv
 
 To try it:
 
-1. Run `npm install` and press `F5`.
-2. Run **OUAF: Add Environment** for each environment.
-3. Connect an environment, expand **Script**, and filter the available Scripts.
-4. Filter Scripts or enable **Show Local Service Scripts**; these explorer choices are retained across refreshes and reloads.
-5. Select one or more Scripts and use **Checkout Service Scripts**, or use it on the Script group to check out all filtered results. Checkout saves Steps and Schema without opening the files.
-6. Expand **Data Area**, select a Data Area to inspect its XML in **View**, or open Schema to inspect it in **View** or edit it in **Edit**. Select an element to copy its XPath, then save Schema changes with the normal editor save shortcut.
-7. Use the Steps or Schema actions to choose **Working copy vs Source**, **Working copy vs Target Environment**, or **Source vs Target Environment**, or replace Steps from another environment.
-8. Commit generated `.ouaf` and `.xml` files with the normal Git integration in VS Code.
+1. Run **OUAF: Add Environment** for each environment.
+2. Connect an environment, expand **Script**, and filter the available Scripts.
+3. Filter Scripts or enable **Show Local Service Scripts**; these explorer choices are retained across refreshes and reloads.
+4. Select one or more Scripts and use **Checkout Service Scripts**, or use it on the Script group to check out all filtered results. Checkout saves Steps and Schema without opening the files.
+5. Expand **Data Area**, select a Data Area to inspect its XML in **View**, or open Schema to inspect it in **View** or edit it in **Edit**. Select an element to copy its XPath, then save Schema changes with the normal editor save shortcut.
+6. Use the Steps or Schema actions to choose **Working copy vs Source**, **Working copy vs Target Environment**, or **Source vs Target Environment**, or replace Steps from another environment.
+7. Commit generated `.ouaf` and `.xml` files with the normal Git integration in VS Code.
 
 When the project is opened in another directory, the extension loads profiles from `.ouaf/environments.json`. Credentials are never written to that file and must be entered again on the new machine or VS Code profile. If a configured checkout directory is no longer valid, right-click the environment in the OUAF Explorer and choose **OUAF: Relocate Checkout Directory**.
 
@@ -71,6 +70,6 @@ Check-in does not publish changes to OUAF. It archives active local files with a
 
 ## Release Notes
 
-### 0.1.0
+### 0.0.2
 
 Added environment profiles, OUAF component comparison, refresh, checkout, and local versioning workflow.
