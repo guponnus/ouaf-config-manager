@@ -4,7 +4,7 @@
   "description": "Extension to code and manage OUAF components",
   "icon": "resources/image_logo.jpg",
   "publisher": "gurumoorthyp",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "engines": {
     "vscode": "^1.136.0"
   },
